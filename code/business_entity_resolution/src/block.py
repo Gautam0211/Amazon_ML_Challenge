@@ -80,7 +80,35 @@ def topk_rows(C, k, rel=0.25, ad=None, amb0=None, very0=None):
     return rows[m], cols[m], vals[m], rank[m]
 
 
-def block_country(ctry, s1, qs, k, cap, budget, writer, rel=0.25, qfrac=1.0, ad=None, qflags=None):
+def capped_slots(M, capmask, m=4):
+    """Per CSR row: up to m (column, weight) entries whose column is a capped token; column -1 = empty slot."""
+    n = M.shape[0]
+    rows = np.repeat(np.arange(n), np.diff(M.indptr))
+    sel = capmask[M.indices]
+    r, c, v = rows[sel], M.indices[sel], M.data[sel]
+    j = np.arange(len(r)) - (np.cumsum(np.bincount(r, minlength=n)) - np.bincount(r, minlength=n))[r]
+    k = j < m
+    T = np.full((n, m), -1, np.int32); W = np.zeros((n, m), np.float32)
+    T[r[k], j[k]] = c[k]; W[r[k], j[k]] = v[k]
+    return T, W
+
+
+def add_capped(C, QT, QW, ST, SW, sub=4_000_000):
+    """Phase 3 full-cosine rerank: add the capped tokens' share of the dot product to every generated pair.
+    Capped (very common) tokens cannot create pairs, but once a pair exists they count in its score."""
+    rows = np.repeat(np.arange(C.shape[0], dtype=np.int32), np.diff(C.indptr))
+    for i in range(0, C.nnz, sub):
+        r, c = rows[i:i + sub], C.indices[i:i + sub]
+        qt, qw, st, sw = QT[r], QW[r], ST[c], SW[c]
+        add = np.zeros(len(r), np.float32)
+        for a in range(QT.shape[1]):
+            for b in range(ST.shape[1]):
+                add += ((qt[:, a] == st[:, b]) & (qt[:, a] >= 0)) * qw[:, a] * sw[:, b]
+        C.data[i:i + sub] += add
+    return C
+
+
+def block_country(ctry, s1, qs, k, cap, budget, writer, rel=0.25, qfrac=1.0, ad=None, qflags=None, rerank=False):
     c1, o1, f1 = s1
     r1 = np.nonzero(c1 == ctry)[0]
     so, sf = rows_subset(o1, f1, r1)
@@ -92,7 +120,11 @@ def block_country(ctry, s1, qs, k, cap, budget, writer, rel=0.25, qfrac=1.0, ad=
     keep = (df <= cap).astype(np.float32)  # tokens allowed to generate pairs
     AT = (sp.diags(1 / anorm) @ A @ sp.diags(keep)).T.tocsr()  # vocab x S1, cosine-ready
     idf_miss = np.float32(np.log(len(r1) + 1))
-    log(f"  [{ctry}] S1={len(r1)} vocab={len(vocab)} capped_tokens={(df > cap).sum()}")
+    capmask = df > cap
+    if rerank:
+        ST, SW = capped_slots((sp.diags(1 / anorm) @ A).tocsr(), capmask)
+    del A
+    log(f"  [{ctry}] S1={len(r1)} vocab={len(vocab)} capped_tokens={capmask.sum()}")
     total, hit_rows = 0, 0
     for src, (cq, oq, fq) in qs.items():
         rq = np.nonzero(cq == ctry)[0]
@@ -117,6 +149,8 @@ def block_country(ctry, s1, qs, k, cap, budget, writer, rel=0.25, qfrac=1.0, ad=
             base = cc[start - 1] if start else 0.0
             end = max(start + 1, int(np.searchsorted(cc, base + budget)))
             C = (B[start:end] @ AT).tocsr()
+            if rerank:
+                C = add_capped(C, *capped_slots(B[start:end].tocsr(), capmask), ST, SW)
             fl = {} if not ad else {"amb0": qflags[src][0][rq[start:end]], "very0": qflags[src][1][rq[start:end]]}
             qr, s1c, val, rk = topk_rows(C, k, rel, ad, **fl)
             writer.write_table(pa.table({
@@ -141,6 +175,7 @@ if __name__ == "__main__":
     ap.add_argument("--out", default="cand.parquet")
     ap.add_argument("--rel", type=float, default=0.4)
     ap.add_argument("--qfrac", type=float, default=1.0)
+    ap.add_argument("--rerank_full", action="store_true", help="score generated pairs with all tokens (Phase 3)")
     ap.add_argument("--adaptive", default="", help="k_clear,k_amb,k_very,rel_hard,ties_amb,ties_very (Phase 2)")
     a = ap.parse_args()
     dst = wpath(a.split, a.out)
@@ -163,7 +198,7 @@ if __name__ == "__main__":
     w = pq.ParquetWriter(dst + ".tmp", schema, compression="zstd")
     budget = a.budget
     for ctry in sorted(set(s1[0])):
-        budget = block_country(ctry, s1, qs, a.k, a.cap, budget, w, a.rel, a.qfrac, ad, qflags)
+        budget = block_country(ctry, s1, qs, a.k, a.cap, budget, w, a.rel, a.qfrac, ad, qflags, a.rerank_full)
     w.close()
     os.replace(dst + ".tmp", dst)
     log(f"wrote {dst}")

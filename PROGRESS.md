@@ -1,15 +1,18 @@
 # PROGRESS — Amazon ML Challenge 2026, Business Entity Resolution
 
 <!-- SESSION-STATE:BEGIN (overwritten at each milestone; resume from here) -->
-## Improvement run (improvement_plan.md) — current state
+## Improvement run (improvement_plan.md) — current state (2026-09-25 23:59)
 
 - Goal: improve pipeline per improvement_plan.md; dev = folds 0-2, primary F1-macro, also F0.5; log experiments/results.csv.
-- Branch: exp/p0-baseline. Tag baseline-E000 = e8eaeee. `source env.sh` before running (memory-safe env).
-- Done: E000 (dev F1 0.94115, F0.5 0.96019, block recall 0.9583). Phase 0 diagnosis -> experiments/diag_E000.md.
-- Tools: src/dev.py (cached dev runner), fstore.py (pair feature cache, seg_000 = v2), block.py --adaptive, sim_block.py, retrieve.py, screen.py.
-- Adaptive K sim (5% queries): tier B 10/20/50 rel0.3 -> recall 0.9577->0.9674 at 1.50x pairs.
-- Current step: E001 (baseline retrained on dev folds only) running.
-- Next: full adaptive blocking (E002), multi-retriever screen, then model phases.
+- Branches: exp/p0-baseline (infra, E000/E001) -> exp/p2-adaptive-k (stacked; E002-E005). Tag baseline-E000 = e8eaeee.
+  gh CLI installed but NOT authenticated -> PRs pending (user must run `gh auth login`).
+- `source env.sh` before running. Runner: `python src/dev.py --exp EXXX --parent ... --cand ... [--sample_frac --neg_keep --groups str,ps]`.
+- Results (dev F1 / F0.5): E000 0.94115/0.96019 (cached v2, 4-fold models) | E001 ref 0.93957/0.9587 |
+  E002 adaptive K (cand_adB) 0.94217/0.96036 KEEP | E003 retriever unions: rejected (cost) | E004 sample 20% 0.94394/0.96197 KEEP.
+- Running: E005 = 40% S1 + hard negatives (easy neg 30%, weighted).
+- Queue: E006 pairscore features (--groups str,ps); P3 full-cosine rerank screen (block.py --rerank_full on qfrac 0.05);
+  Optuna (P6); policy.py (P9); LTR (P10). Final: holdout folds 3-4 once, test inference, validator.
+- Memory: peak commit ~5.4 GB at 20% sample (limit!). Blocking train adaptive = 61 min.
 <!-- SESSION-STATE:END -->
 
 

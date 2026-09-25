@@ -34,9 +34,9 @@ def rss_gb():
 
 
 def peak_gb():
-    """Peak working set of this process (Windows); falls back to current RSS elsewhere."""
+    """Peak private commit of this process (Windows; memmapped feature files excluded), else current RSS."""
     m = psutil.Process().memory_info()
-    return getattr(m, "peak_wset", m.rss) / 2**30
+    return getattr(m, "peak_pagefile", m.rss) / 2**30
 
 def free_gb():
     return psutil.virtual_memory().available / 2**30
