@@ -42,11 +42,11 @@ def load_cand(name):
 class Assembler:
     """Builds model rows for index sets of a candidate table: q_src, context, extra cand columns, strings."""
 
-    def __init__(self, cand, drop=(), groups=("str",)):
+    def __init__(self, cand, drop=(), groups=("str",), split="train"):
         self.c = cand
         self.ctx = Context(cand)
         self.extra = [c for c in cand if c not in BASE]
-        self.stores = [Store("train", g) for g in groups]
+        self.stores = [Store(split, g) for g in groups]
         names = ["q_src_f"] + [f"ctx_{k}" for k in self.ctx.batch(slice(0, 1))] + [f"cand_{c}" for c in self.extra]
         names += [n for st in self.stores for n in st.cols]
         self.keep = [i for i, n in enumerate(names) if n not in drop]
@@ -81,21 +81,27 @@ class RowSeq(lgb.Sequence):
         b = i // self.batch_size
         if self._cache[0] != b:
             self._cache = (b, self.asm.rows(self.idx[b * self.batch_size:(b + 1) * self.batch_size]))
-        return self._cache[1][i - b * self.batch_size]
+        return self._cache[1][i - b * self.batch_size].astype(np.float64)  # LightGBM bin sampling wants double
 
 
-def train_models(asm, y_all, folds, s1_in, params, rounds, early_stop, neg_keep=1.0, hard_rel=0.6):
+def sample_rows(asm, y_all, folds, s1_in, neg_keep=1.0, hard_rel=0.6, max_fold=max(DEV_FOLDS)):
+    """Training rows: all candidates of sampled S1 in folds <= max_fold; easy negatives optionally
+    subsampled (Phase 7: positives and hard negatives kept, easy negatives re-weighted)."""
     c = asm.c
-    f = folds[c["s1_row"]]
-    samp = np.nonzero(s1_in[c["s1_row"]] & (f <= max(DEV_FOLDS)))[0]
+    samp = np.nonzero(s1_in[c["s1_row"]] & (folds[c["s1_row"]] <= max_fold))[0]
     wt = None
-    if neg_keep < 1:  # Phase 7: keep positives and hard negatives, subsample easy negatives (re-weighted)
+    if neg_keep < 1:
         hard = (c["brank"][samp] == 0) | (c["bscore"][samp] >= hard_rel * asm.ctx.top1[asm.ctx.gid[samp]])
         easy = ~y_all[samp] & ~hard
         keep = ~easy | (np.random.default_rng(1).random(len(samp)) < neg_keep)
         log(f"hard-negative sampling: rows {len(samp)} -> {keep.sum()} (easy negatives {easy.mean():.3f}, kept at {neg_keep})")
         samp, wt = samp[keep], np.where(easy[keep], 1 / neg_keep, 1.0).astype(np.float32)
-    y, fs = y_all[samp], f[samp]
+    return samp, wt
+
+
+def train_models(asm, y_all, folds, s1_in, params, rounds, early_stop, neg_keep=1.0, hard_rel=0.6):
+    samp, wt = sample_rows(asm, y_all, folds, s1_in, neg_keep, hard_rel)
+    y, fs = y_all[samp], folds[asm.c["s1_row"][samp]]
     log(f"train sample rows={len(y)} pos_rate={y.mean():.4f} features={len(asm.names)}")
     # streamed binning, then per-fold subsets share the binned data
     full = lgb.Dataset(RowSeq(asm, samp), y, weight=wt, feature_name=asm.names, free_raw_data=True, params={"verbose": -1}).construct()
@@ -195,13 +201,13 @@ def main():
     bq = best_per_query(s1, qs, qr, p)
     per = dev_eval(None, None, None, None, a.t, a.margin, folds, gd, bq=bq)
     summ = summarize(per)
-    # informational: best F1 policy on dev folds (Phase 9 tunes this properly)
+    # informational: best F0.5 policy on dev folds (Phase 9 tunes this properly)
     grid = [(t, mg) for t in np.arange(0.3, 0.86, 0.05) for mg in (0.0, 0.1, 0.2)]
-    best = max(((np.mean([v["macro_f1"] for v in dev_eval(None, None, None, None, t, mg, folds, gd, bq=bq).values()]), t, mg)
+    best = max(((np.mean([v["macro_f05"] for v in dev_eval(None, None, None, None, t, mg, folds, gd, bq=bq).values()]), t, mg)
                 for t, mg in grid))
-    log(f"{a.exp}: F1 {summ['f1_mean']} +- {summ['f1_std']} F0.5 {summ['f05_mean']} recall_block {rec:.4f} | best-F1 policy t={best[1]:.2f} m={best[2]} -> {best[0]:.5f}")
+    log(f"{a.exp}: F1 {summ['f1_mean']} +- {summ['f1_std']} F0.5 {summ['f05_mean']} P {summ['precision']} R {summ['recall']} recall_block {rec:.4f} peak {peak_gb():.2f}G | best-F0.5 policy t={best[1]:.2f} m={best[2]} -> {best[0]:.5f}")
     json.dump({"per_fold": per, "importance": [(n, float(g)) for g, n in imp], "iters": iters, "params": params,
-               "best_f1_policy": best}, open(wpath("exp", a.exp, "summary.json"), "w"), indent=1, default=float)
+               "best_f05_policy": best}, open(wpath("exp", a.exp, "summary.json"), "w"), indent=1, default=float)
     if not a.no_log:
         append_result({
             "exp_id": a.exp, "parent": a.parent, "change": a.change,
@@ -213,7 +219,7 @@ def main():
             "t_block_s": a.t_block_s, "t_feat_s": round(t_feat), "t_model_s": round(t_model), "peak_mem_gb": round(peak_gb(), 2),
             "model_params": json.dumps({k: v for k, v in params.items() if k not in ("verbose", "num_threads")}),
             "best_iter": "/".join(map(str, iters)), "threshold": a.t, "margin": a.margin,
-            "notes": f"bestF1policy t={best[1]:.2f} m={best[2]} F1={best[0]:.5f}"})
+            "notes": f"bestF05policy t={best[1]:.2f} m={best[2]} F05={best[0]:.5f}"})
     log(f"dev.py total {time.time() - t0:.0f}s")
 
 

@@ -68,13 +68,13 @@ Precision is already 0.987; the gap is **recall**. ~4.15% of true pairs never re
 
 ## 2. Metrics
 
-- **Primary development metric:** entity-level (per-S1) **F1-macro**, computed with the full prediction pipeline (assignment + threshold + margin), averaged over folds 0–2.
-- **Always also report:** macro F0.5, precision, recall, singleton accuracy (correctly predicting "no match").
+- **Primary development metric:** entity-level (per-S1) **macro F0.5** — this is what the leaderboard scores. Computed with the full prediction pipeline (assignment + threshold + margin), averaged over folds 0–2. (Changed from F1 after E005; E000–E005 decisions stand because F0.5 rose with every kept change.)
+- **Always also report:** F1-macro, precision, recall, singleton accuracy (correctly predicting "no match").
 - **Blocking metrics:** recall, ceiling, candidates/S1, total candidate pairs.
 - **Cost metrics:** runtime per stage, peak memory.
 - Report per-fold values plus mean ± std; a gain smaller than the fold-to-fold std is not a real gain.
 
-**Keep/reject rule (default, adjust if fold noise is larger):** keep a change only if mean F1-macro on folds 0–2 improves by ≥ 0.001 **and** it does not lose on 2 of 3 folds, **and** runtime/memory stay within limits. For blocking changes, keep if ceiling rises materially (≥ ~0.3 pp) without more than ~1.5× candidates/S1.
+**Keep/reject rule (default, adjust if fold noise is larger):** keep a change only if mean macro F0.5 on folds 0–2 improves by more than ~3× the fold std (and normally ≥ 0.0005) **and** it does not lose on 2 of 3 folds, **and** runtime/memory stay within limits. For blocking changes, keep if ceiling rises materially (≥ ~0.3 pp) without more than ~1.5× candidates/S1.
 
 ---
 
@@ -131,7 +131,7 @@ Run **after** blocking/candidate changes are settled, because the optimal hyperp
 
 **Stage A — model only.** Freeze blocking, candidates, features, assignment, threshold, margin.
 - Sampler: Optuna TPE (seeded); pruner: Hyperband (or median) with LightGBM pruning callback.
-- Objective per trial: train on each of folds 0–2's train split → predict validation candidates → apply current assignment + threshold + margin → entity-level F1-macro → return the mean across folds. Log F0.5, precision, recall, singleton accuracy as trial user attributes.
+- Objective per trial: train on each of folds 0–2's train split → predict validation candidates → apply current assignment + threshold + margin → entity-level macro F0.5 → return the mean across folds. Log F1-macro, precision, recall, singleton accuracy as trial user attributes.
 - Search space:
 
 | Parameter | Range |
@@ -172,7 +172,7 @@ First audit the 35 features (importance, near-duplicates, leakage). Then test ad
 
 ### Phase 9 — Threshold, Margin, Calibration
 1. Keep threshold/margin fixed while measuring pure model gains.
-2. Then retune on folds 0–2 with a finer grid.
+2. Then retune on folds 0–2 with a finer grid, **maximizing macro F0.5** (not F1 — the F1-optimal t=0.40/m=0.1 is recorded only and must not be applied).
 3. Optionally test calibration (isotonic/Platt fit on folds 0–2 out-of-fold predictions).
 4. Test adaptive thresholds by regime (candidate rank, score gap, singleton risk, candidate count, country, script) — only on slices large enough not to overfit.
 
