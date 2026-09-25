@@ -33,6 +33,11 @@ def rss_gb():
     return psutil.Process().memory_info().rss / 2**30
 
 
+def peak_gb():
+    """Peak working set of this process (Windows); falls back to current RSS elsewhere."""
+    m = psutil.Process().memory_info()
+    return getattr(m, "peak_wset", m.rss) / 2**30
+
 def free_gb():
     return psutil.virtual_memory().available / 2**30
 

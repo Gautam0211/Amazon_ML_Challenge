@@ -44,8 +44,19 @@ def rows_subset(offs, flat, rows):
     return o, flat[idx]
 
 
-def topk_rows(C, k, rel=0.25):
-    """Per-row top-k of a CSR matrix -> (row, col, val) arrays, sorted by row then score desc."""
+def adaptive_budget(ad, rows, relv, n, amb0, very0, rel):
+    """Phase 2 adaptive K: per-query (k, rel) from near-tie count and query attributes.
+    ad = (k_clear, k_amb, k_very, rel_hard, ties_amb, ties_very); a near tie scores >= 0.9 x query best.
+    amb0/very0: per-row flags known before retrieval (non-ASCII name / empty address)."""
+    k1, k2, k3, rh, ta, tv = ad
+    ties = np.bincount(rows, relv >= 0.9, minlength=n)
+    amb, very = amb0 | (ties >= ta), very0 | (ties >= tv)
+    return np.where(very, k3, np.where(amb, k2, k1)), np.where(amb | very, rh, rel)
+
+
+def topk_rows(C, k, rel=0.25, ad=None, amb0=None, very0=None):
+    """Per-row top-k of a CSR matrix -> (row, col, val) arrays, sorted by row then score desc.
+    With `ad` (adaptive_budget params) k and rel vary per row."""
     n = C.shape[0]
     rows = np.repeat(np.arange(n), np.diff(C.indptr))
     if C.nnz == 0:
@@ -54,17 +65,22 @@ def topk_rows(C, k, rel=0.25):
     nz = np.diff(C.indptr) > 0
     rmax = np.zeros(n, C.data.dtype)
     rmax[nz] = np.maximum.reduceat(C.data, C.indptr[:-1][nz])
-    m = C.data >= rel * rmax[rows]
+    m = C.data >= (min(rel, ad[3]) if ad else rel) * rmax[rows]
     rows, cols, vals = rows[m], C.indices[m], C.data[m]
     order = np.lexsort((-vals, rows))
     rows, cols, vals = rows[order], cols[order], vals[order]
     first = np.r_[0, np.nonzero(np.diff(rows))[0] + 1]
     rank = np.arange(len(rows)) - np.repeat(first, np.diff(np.r_[first, len(rows)]))
-    m = rank < k
+    if ad:
+        relv = vals / rmax[rows]
+        kq, rq = adaptive_budget(ad, rows, relv, n, amb0, very0, rel)
+        m = (rank < kq[rows]) & (relv >= rq[rows] - 1e-6)
+    else:
+        m = rank < k
     return rows[m], cols[m], vals[m], rank[m]
 
 
-def block_country(ctry, s1, qs, k, cap, budget, writer, rel=0.25, qfrac=1.0):
+def block_country(ctry, s1, qs, k, cap, budget, writer, rel=0.25, qfrac=1.0, ad=None, qflags=None):
     c1, o1, f1 = s1
     r1 = np.nonzero(c1 == ctry)[0]
     so, sf = rows_subset(o1, f1, r1)
@@ -101,7 +117,8 @@ def block_country(ctry, s1, qs, k, cap, budget, writer, rel=0.25, qfrac=1.0):
             base = cc[start - 1] if start else 0.0
             end = max(start + 1, int(np.searchsorted(cc, base + budget)))
             C = (B[start:end] @ AT).tocsr()
-            qr, s1c, val, rk = topk_rows(C, k, rel)
+            fl = {} if not ad else {"amb0": qflags[src][0][rq[start:end]], "very0": qflags[src][1][rq[start:end]]}
+            qr, s1c, val, rk = topk_rows(C, k, rel, ad, **fl)
             writer.write_table(pa.table({
                 "q_src": np.full(len(qr), src, np.int8), "q_row": rq[start + qr].astype(np.int32),
                 "s1_row": r1[s1c].astype(np.int32), "bscore": val.astype(np.float32), "brank": rk.astype(np.int8)}))
@@ -124,6 +141,7 @@ if __name__ == "__main__":
     ap.add_argument("--out", default="cand.parquet")
     ap.add_argument("--rel", type=float, default=0.4)
     ap.add_argument("--qfrac", type=float, default=1.0)
+    ap.add_argument("--adaptive", default="", help="k_clear,k_amb,k_very,rel_hard,ties_amb,ties_very (Phase 2)")
     a = ap.parse_args()
     dst = wpath(a.split, a.out)
     if os.path.exists(dst):
@@ -131,12 +149,21 @@ if __name__ == "__main__":
         raise SystemExit
     s1 = load_tokens(a.split, 1)
     qs = {2: load_tokens(a.split, 2), 3: load_tokens(a.split, 3)}
-    log(f"blocking {a.split}: k={a.k} cap={a.cap}")
+    ad, qflags = None, None
+    if a.adaptive:
+        v = a.adaptive.split(",")
+        ad = (int(v[0]), int(v[1]), int(v[2]), float(v[3]), int(v[4]), int(v[5]))
+        qflags = {}
+        for s in (2, 3):
+            t = pq.read_table(wpath(a.split, f"s{s}.parquet"), columns=["nonascii", "addr_norm"])
+            qflags[s] = (t["nonascii"].to_numpy(zero_copy_only=False).astype(bool),
+                         pc.equal(pc.utf8_length(t["addr_norm"]), 0).to_numpy(zero_copy_only=False).astype(bool))
+    log(f"blocking {a.split}: k={a.k} cap={a.cap} rel={a.rel} adaptive={ad}")
     schema = pa.schema([("q_src", pa.int8()), ("q_row", pa.int32()), ("s1_row", pa.int32()), ("bscore", pa.float32()), ("brank", pa.int8())])
     w = pq.ParquetWriter(dst + ".tmp", schema, compression="zstd")
     budget = a.budget
     for ctry in sorted(set(s1[0])):
-        budget = block_country(ctry, s1, qs, a.k, a.cap, budget, w, a.rel, a.qfrac)
+        budget = block_country(ctry, s1, qs, a.k, a.cap, budget, w, a.rel, a.qfrac, ad, qflags)
     w.close()
     os.replace(dst + ".tmp", dst)
     log(f"wrote {dst}")
