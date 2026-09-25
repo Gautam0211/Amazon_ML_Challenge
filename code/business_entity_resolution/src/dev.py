@@ -52,7 +52,12 @@ class Assembler:
         self.keep = [i for i, n in enumerate(names) if n not in drop]
         self.names = [names[i] for i in self.keep]
 
-    def rows(self, idx):
+    def rows(self, idx, chunk=2_000_000):
+        if len(idx) > chunk:  # fill a preallocated matrix: no 2x temporaries for big samples
+            X = np.empty((len(idx), len(self.names)), np.float32)
+            for i in range(0, len(idx), chunk):
+                X[i:i + chunk] = self.rows(idx[i:i + chunk])
+            return X
         c = self.c
         cols = [c["q_src"][idx].astype(np.float32)] + list(self.ctx.batch(idx).values()) + [c[e][idx].astype(np.float32) for e in self.extra]
         keys = pair_key(c["s1_row"][idx], c["q_src"][idx], c["q_row"][idx])
@@ -67,14 +72,17 @@ def train_models(asm, y_all, folds, s1_in, params, rounds, early_stop):
     X = asm.rows(samp)
     y, fs = y_all[samp], f[samp]
     log(f"train sample rows={len(y)} pos_rate={y.mean():.4f} features={len(asm.names)}")
+    # bin once, then per-fold subsets share the binned data (raw float matrix freed right away)
+    full = lgb.Dataset(X, y, feature_name=asm.names, free_raw_data=True, params={"verbose": -1}).construct()
+    del X
     models, iters = [], []
     for k in DEV_FOLDS:
         tr = fs != k
-        ds = lgb.Dataset(X[tr], y[tr], feature_name=asm.names, free_raw_data=True)
+        ds = full.subset(np.nonzero(tr)[0])
         cb = [lgb.log_evaluation(0)]
         vs = []
         if early_stop:
-            vs = [lgb.Dataset(X[~tr], y[~tr], reference=ds)]
+            vs = [full.subset(np.nonzero(~tr)[0])]
             cb.append(lgb.early_stopping(early_stop, verbose=False))
         m = lgb.train(params, ds, rounds, valid_sets=vs, callbacks=cb)
         models.append(m); iters.append(m.best_iteration or m.num_trees())
