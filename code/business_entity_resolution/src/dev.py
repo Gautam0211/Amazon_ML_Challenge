@@ -65,15 +65,22 @@ class Assembler:
         return X[:, self.keep] if len(self.keep) < X.shape[1] else X
 
 
-def train_models(asm, y_all, folds, s1_in, params, rounds, early_stop):
+def train_models(asm, y_all, folds, s1_in, params, rounds, early_stop, neg_keep=1.0, hard_rel=0.6):
     c = asm.c
     f = folds[c["s1_row"]]
     samp = np.nonzero(s1_in[c["s1_row"]] & (f <= max(DEV_FOLDS)))[0]
+    wt = None
+    if neg_keep < 1:  # Phase 7: keep positives and hard negatives, subsample easy negatives (re-weighted)
+        hard = (c["brank"][samp] == 0) | (c["bscore"][samp] >= hard_rel * asm.ctx.top1[asm.ctx.gid[samp]])
+        easy = ~y_all[samp] & ~hard
+        keep = ~easy | (np.random.default_rng(1).random(len(samp)) < neg_keep)
+        log(f"hard-negative sampling: rows {len(samp)} -> {keep.sum()} (easy negatives {easy.mean():.3f}, kept at {neg_keep})")
+        samp, wt = samp[keep], np.where(easy[keep], 1 / neg_keep, 1.0).astype(np.float32)
     X = asm.rows(samp)
     y, fs = y_all[samp], f[samp]
     log(f"train sample rows={len(y)} pos_rate={y.mean():.4f} features={len(asm.names)}")
     # bin once, then per-fold subsets share the binned data (raw float matrix freed right away)
-    full = lgb.Dataset(X, y, feature_name=asm.names, free_raw_data=True, params={"verbose": -1}).construct()
+    full = lgb.Dataset(X, y, weight=wt, feature_name=asm.names, free_raw_data=True, params={"verbose": -1}).construct()
     del X
     models, iters = [], []
     for k in DEV_FOLDS:
@@ -121,6 +128,8 @@ def main():
     ap.add_argument("--rounds", type=int, default=400)
     ap.add_argument("--early_stop", type=int, default=0)
     ap.add_argument("--sample_frac", type=float, default=0.08)
+    ap.add_argument("--neg_keep", type=float, default=1.0, help="keep rate of easy negatives (Phase 7)")
+    ap.add_argument("--hard_rel", type=float, default=0.6, help="negative is hard if rank 0 or score >= hard_rel x query best")
     ap.add_argument("--drop", default="", help="comma-separated feature names to exclude")
     ap.add_argument("--groups", default="str", help="feature-store groups: str[,ps]")
     ap.add_argument("--t", type=float, default=0.6)
@@ -157,7 +166,7 @@ def main():
             iters = [m.best_iteration or m.num_trees() for m in models]
             imp = sorted(zip(models[0].feature_importance("gain"), asm.names), reverse=True)
         else:
-            models, iters, imp = train_models(asm, y, folds, s1_in, params, a.rounds, a.early_stop)
+            models, iters, imp = train_models(asm, y, folds, s1_in, params, a.rounds, a.early_stop, a.neg_keep, a.hard_rel)
             for m, f in zip(models, mp):
                 m.save_model(f)
         log("  top gain: " + ", ".join(f"{n}={g:.0f}" for g, n in imp[:12]))
@@ -180,7 +189,8 @@ def main():
         append_result({
             "exp_id": a.exp, "parent": a.parent, "change": a.change,
             "config_hash": config_hash({"cand": a.cand, "params": params, "rounds": a.rounds, "es": a.early_stop,
-                                        "frac": a.sample_frac, "drop": a.drop, "groups": a.groups}),
+                                        "frac": a.sample_frac, "drop": a.drop, "groups": a.groups,
+                                        "neg_keep": a.neg_keep, "hard_rel": a.hard_rel}),
             "seed": params.get("seed", 7), "folds": "0-2", "block_recall": round(rec, 5), "ceiling_f1": round(c1, 5),
             "ceiling_f05": round(c5, 5), "cand_per_s1": round(len(s1) / len(folds), 2), "total_pairs": len(s1), **summ,
             "t_block_s": a.t_block_s, "t_feat_s": round(t_feat), "t_model_s": round(t_model), "peak_mem_gb": round(peak_gb(), 2),
