@@ -35,26 +35,33 @@ class Store:
         for d in seg_dirs(split):
             n = json.load(open(os.path.join(d, "meta.json")))["n"]
             self.segs.append((np.load(os.path.join(d, "keys.npy")), np.load(os.path.join(d, "rows.npy")),
-                              np.memmap(os.path.join(d, "X.f32"), np.float32, "r", shape=(n, len(STR_COLS)))))
+                              (os.path.join(d, "X.f32"), (n, len(STR_COLS)))))
 
-    def locate(self, keys):
-        """(segment id, row) per key; segment -1 = not stored."""
+    def locate(self, keys, chunk=4_000_000):
+        """(segment id, row) per key; segment -1 = not stored. Chunked: bounded temporaries."""
         seg = np.full(len(keys), -1, np.int8); row = np.zeros(len(keys), np.int64)
-        for i, (k, r, _) in enumerate(self.segs):
-            todo = np.nonzero(seg < 0)[0]
-            pos = np.searchsorted(k, keys[todo]).clip(0, len(k) - 1)
-            hit = k[pos] == keys[todo]
-            seg[todo[hit]] = i; row[todo[hit]] = r[pos[hit]]
+        for c0 in range(0, len(keys), chunk):
+            kc = keys[c0:c0 + chunk]
+            sc, rc = seg[c0:c0 + chunk], row[c0:c0 + chunk]
+            for i, (k, r, _) in enumerate(self.segs):
+                todo = np.nonzero(sc < 0)[0]
+                pos = np.searchsorted(k, kc[todo]).clip(0, len(k) - 1)
+                hit = k[pos] == kc[todo]
+                sc[todo[hit]] = i; rc[todo[hit]] = r[pos[hit]]
         return seg, row
 
     def gather(self, keys):
         seg, row = self.locate(keys)
         assert (seg >= 0).all(), f"{(seg < 0).sum()} pairs missing from feature store"
         X = np.empty((len(keys), len(STR_COLS)), np.float32)
-        for i, (_, _, M) in enumerate(self.segs):
+        for i, (_, _, (path, shape)) in enumerate(self.segs):
             m = np.nonzero(seg == i)[0]
+            if not len(m):
+                continue
             o = np.argsort(row[m])  # sequential memmap reads
+            M = np.memmap(path, np.float32, "r", shape=shape)  # mapped only for this call: pages return to standby
             X[m[o]] = M[row[m][o]]
+            del M
         return X
 
 

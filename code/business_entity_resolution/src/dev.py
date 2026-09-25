@@ -133,13 +133,19 @@ def main():
     else:
         asm = Assembler(cand, drop=set(filter(None, a.drop.split(","))))
         s1_in = np.random.default_rng(0).random(len(folds)) < a.sample_frac
-        models, iters, imp = train_models(asm, y, folds, s1_in, params, a.rounds, a.early_stop)
+        mp = [wpath("exp", a.exp, f"model_{k}.txt") for k in DEV_FOLDS]
+        if all(map(os.path.exists, mp)):  # resume after an abort in scoring
+            models = [lgb.Booster(model_file=f) for f in mp]
+            iters = [m.best_iteration or m.num_trees() for m in models]
+            imp = sorted(zip(models[0].feature_importance("gain"), asm.names), reverse=True)
+        else:
+            models, iters, imp = train_models(asm, y, folds, s1_in, params, a.rounds, a.early_stop)
+            for m, f in zip(models, mp):
+                m.save_model(f)
         log("  top gain: " + ", ".join(f"{n}={g:.0f}" for g, n in imp[:12]))
         p = score_all(asm, models, iters)
         del asm
         pq.write_table(pa.table({"s1_row": s1, "q_src": qs, "q_row": qr, "p": p}), out)
-        for k, m in enumerate(models):
-            m.save_model(wpath("exp", a.exp, f"model_{k}.txt"))
     t_model = time.time() - tf - t_feat
     rec, c1, c5 = ceiling(s1, qs, qr, folds, gd, gk)
     bq = best_per_query(s1, qs, qr, p)

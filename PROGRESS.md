@@ -1,5 +1,18 @@
 # PROGRESS — Amazon ML Challenge 2026, Business Entity Resolution
 
+<!-- SESSION-STATE:BEGIN (overwritten at each milestone; resume from here) -->
+## Improvement run (improvement_plan.md) — current state
+
+- Goal: improve pipeline per improvement_plan.md; dev = folds 0-2, primary F1-macro, also F0.5; log experiments/results.csv.
+- Branch: exp/p0-baseline. Tag baseline-E000 = e8eaeee. `source env.sh` before running (memory-safe env).
+- Done: E000 (dev F1 0.94115, F0.5 0.96019, block recall 0.9583). Phase 0 diagnosis -> experiments/diag_E000.md.
+- Tools: src/dev.py (cached dev runner), fstore.py (pair feature cache, seg_000 = v2), block.py --adaptive, sim_block.py, retrieve.py, screen.py.
+- Adaptive K sim (5% queries): tier B 10/20/50 rel0.3 -> recall 0.9577->0.9674 at 1.50x pairs.
+- Current step: E001 (baseline retrained on dev folds only) running.
+- Next: full adaptive blocking (E002), multi-retriever screen, then model phases.
+<!-- SESSION-STATE:END -->
+
+
 Plain-language log. Only measured numbers appear here. "Pending" means not done yet.
 
 ## Dashboard
