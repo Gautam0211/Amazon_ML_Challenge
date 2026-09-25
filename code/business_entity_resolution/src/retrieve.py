@@ -42,7 +42,7 @@ def _hash_words(arr, salt, minlen=2, digits=True, only_digits=False):
     if only_digits:
         keep = isd & (ln >= 1)
     v = vals.filter(pa.array(keep)).to_numpy(zero_copy_only=False)
-    h = pd.util.hash_array(v, categorize=False).view(np.int64) ^ np.int64(salt * 0x9E3779B97F4A7C15 - 2**63)
+    h = pd.util.hash_array(v, categorize=False).view(np.int64) ^ np.int64((salt * 0x9E3779B97F4A7C15) % 2**64 - 2**63)
     return parent[keep], h
 
 

@@ -18,10 +18,10 @@ def sampled(q_row, qfrac):
     return (q_row.astype(np.int64) * 2654435761 % 1000) < qfrac * 1000
 
 
-def keys(name, qfrac):
-    t = pq.read_table(wpath("train", name), columns=["s1_row", "q_src", "q_row"])
+def keys(name, qfrac, kmax=99):
+    t = pq.read_table(wpath("train", name), columns=["s1_row", "q_src", "q_row", "brank"])
     s1, qs, qr = (t[c].to_numpy() for c in ("s1_row", "q_src", "q_row"))
-    m = sampled(qr, qfrac)
+    m = sampled(qr, qfrac) & (t["brank"].to_numpy() < kmax)
     return np.unique(pair_key(s1[m], qs[m], qr[m]))
 
 
@@ -29,6 +29,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--qfrac", type=float, default=0.02)
     ap.add_argument("--main", default="cand.parquet")
+    ap.add_argument("--kmax", default="99", help="comma list: per-retriever rank limits to try")
     ap.add_argument("files", nargs="+")
     a = ap.parse_args()
     folds = np.load(wpath("train", "folds.npy"))
@@ -40,18 +41,19 @@ def main():
     main = keys(a.main, a.qfrac)
     base = np.isin(gk, main)
     log(f"sample queries={nq} dev true pairs={len(gk)} | main {a.main}: recall={base.mean():.4f} pairs/q={len(main) / nq:.2f}")
-    allk = main
-    for f in a.files:
-        k = keys(f, a.qfrac)
-        hit = np.isin(gk, k)
-        u = np.union1d(main, k)
-        uh = np.isin(gk, u)
-        log(f"  {f}: alone recall={hit.mean():.4f} pairs/q={len(k) / nq:.2f} | union w/ main recall={uh.mean():.4f} "
-            f"(+{uh.mean() - base.mean():.4f}) pairs/q={len(u) / nq:.2f} (x{len(u) / len(main):.2f})")
-        allk = np.union1d(allk, k)
-    if len(a.files) > 1:
-        uh = np.isin(gk, allk)
-        log(f"  UNION all: recall={uh.mean():.4f} (+{uh.mean() - base.mean():.4f}) pairs/q={len(allk) / nq:.2f} (x{len(allk) / len(main):.2f})")
+    for km in map(int, a.kmax.split(",")):
+        allk = main
+        for f in a.files:
+            k = keys(f, a.qfrac, km)
+            hit = np.isin(gk, k)
+            u = np.union1d(main, k)
+            uh = np.isin(gk, u)
+            log(f"  k<{km} {f}: alone recall={hit.mean():.4f} pairs/q={len(k) / nq:.2f} | union w/ main recall={uh.mean():.4f} "
+                f"(+{uh.mean() - base.mean():.4f}) pairs/q={len(u) / nq:.2f} (x{len(u) / len(main):.2f})")
+            allk = np.union1d(allk, k)
+        if len(a.files) > 1:
+            uh = np.isin(gk, allk)
+            log(f"  k<{km} UNION all: recall={uh.mean():.4f} (+{uh.mean() - base.mean():.4f}) pairs/q={len(allk) / nq:.2f} (x{len(allk) / len(main):.2f})")
 
 
 if __name__ == "__main__":
