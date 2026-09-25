@@ -81,7 +81,7 @@ class RowSeq(lgb.Sequence):
         b = i // self.batch_size
         if self._cache[0] != b:
             self._cache = (b, self.asm.rows(self.idx[b * self.batch_size:(b + 1) * self.batch_size]))
-        return self._cache[1][i - b * self.batch_size]
+        return self._cache[1][i - b * self.batch_size].astype(np.float64)  # LightGBM bin sampling wants double
 
 
 def train_models(asm, y_all, folds, s1_in, params, rounds, early_stop, neg_keep=1.0, hard_rel=0.6):

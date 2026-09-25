@@ -45,15 +45,17 @@ def rowdot(A, B, ia, ib, chunk=1_000_000):
 
 
 def run(split, cand):
-    """Score the pairs of `cand` that the ps store does not hold yet."""
+    """Score the pairs of `cand` that the ps store does not hold yet (resumable per field)."""
     s1r, qs, qr = missing_pairs(split, cand, "ps")
     if not len(s1r):
         log("pairscore: all pairs cached"); return
-    keys = pair_key(s1r, qs, qr)
-    log(f"pairscore: scoring {len(keys)} new pairs")
-    cols = [f"ps_{f}" for f in FIELDS]
-    d, M = new_segment(split, "ps", len(keys), cols)
-    for j, f in enumerate(FIELDS):
+    log(f"pairscore: scoring {len(s1r)} new pairs")
+    tag = f"{len(s1r)}_{int(pair_key(s1r[:1], qs[:1], qr[:1])[0])}_{int(pair_key(s1r[-1:], qs[-1:], qr[-1:])[0])}"
+    pend = wpath(split, "fstore", "ps", f"pending_{tag}", "x")[:-2]
+    colf = lambda f: os.path.join(pend, f"{f}.npy")
+    for f in FIELDS:
+        if os.path.exists(colf(f)):
+            continue
         res = np.full(len(s1r), np.nan, np.float32)
         c1, o1, h1 = tokens(split, 1, f)
         per = {}  # country -> (S1 matrix, has-field flags, vocab, idf, idf_miss, S1 row -> local index)
@@ -66,27 +68,36 @@ def run(split, cand):
             idf = np.log((len(r1) + 1) / df).astype(np.float32)
             idf_miss = np.float32(np.log(len(r1) + 1))
             A, a_has = normed(np.r_[0, np.cumsum(lens)], sf, vocab, idf, idf_miss)
-            loc1 = np.full(len(c1), -1, np.int64); loc1[r1] = np.arange(len(r1))
+            del sf, inv, df
+            loc1 = np.full(len(c1), -1, np.int32); loc1[r1] = np.arange(len(r1))
             per[ctry] = (A, a_has, vocab, idf, idf_miss, loc1)
-        del h1, o1
+        del c1, o1, h1
         for src in (2, 3):
             cq, oq, hq = tokens(split, src, f)
+            del cq
             for ctry, (A, a_has, vocab, idf, idf_miss, loc1) in per.items():
                 B, b_has = normed(oq, hq, vocab, idf, idf_miss)
-                m = np.nonzero((qs == src) & (loc1[s1r] >= 0))[0]
-                ia, ib = loc1[s1r[m]], qr[m].astype(np.int64)
+                m = np.nonzero(qs == src)[0]
+                m = m[loc1[s1r[m]] >= 0]
+                ia, ib = loc1[s1r[m]], qr[m]
                 v = rowdot(A, B, ia, ib)
                 v[~(a_has[ia] & b_has[ib])] = np.nan
                 res[m] = v
-                del B
+                del B, m, ia, ib, v
                 guard("pairscore")
-            del cq, oq, hq
+            del oq, hq
         del per
-        M[:, j] = res
+        np.save(colf(f) + ".tmp.npy", res); os.replace(colf(f) + ".tmp.npy", colf(f))
         log(f"  {f}: done, nan={np.isnan(res).mean():.3f} mean={np.nanmean(res):.3f}")
         del res
+    cols = [f"ps_{f}" for f in FIELDS]
+    d, M = new_segment(split, "ps", len(s1r), cols)
+    for j, f in enumerate(FIELDS):
+        M[:, j] = np.load(colf(f), mmap_mode="r")
     M.flush(); del M
-    finish_segment(d, len(keys), keys, cols)
+    finish_segment(d, len(s1r), pair_key(s1r, qs, qr), cols)
+    import shutil
+    shutil.rmtree(pend)
 
 
 if __name__ == "__main__":

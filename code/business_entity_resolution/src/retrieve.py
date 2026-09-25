@@ -63,7 +63,8 @@ def _ngrams(arr, n, salt):
 
 
 def tokens(split, src, ret):
-    t = pq.read_table(wpath(split, f"s{src}.parquet"), columns=["country", "name_core", "name_skel", "addr_norm"])
+    col = {"name": "name_core", "skel": "name_skel", "addr": "addr_norm", "num": "addr_norm"}.get(ret, "name_core")
+    t = pq.read_table(wpath(split, f"s{src}.parquet"), columns=["country", col])
     n = t.num_rows
     if ret == "name":
         p1, h1 = _hash_words(t["name_core"], SALT["name"], digits=False)
