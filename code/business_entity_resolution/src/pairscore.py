@@ -17,7 +17,7 @@ import pyarrow.parquet as pq
 import scipy.sparse as sp
 
 from common import guard, log, wpath
-from fstore import Store, finish_segment, new_segment
+from fstore import finish_segment, missing_pairs, new_segment
 from metric import pair_key
 from retrieve import tokens
 
@@ -46,17 +46,10 @@ def rowdot(A, B, ia, ib, chunk=1_000_000):
 
 def run(split, cand):
     """Score the pairs of `cand` that the ps store does not hold yet."""
-    c = pq.read_table(wpath(split, cand), columns=["s1_row", "q_src", "q_row"])
-    s1r, qs, qr = (c[k].to_numpy() for k in ("s1_row", "q_src", "q_row"))
-    del c
-    keys = pair_key(s1r, qs, qr)
-    seg, _ = Store(split, "ps").locate(keys)
-    new = np.nonzero(seg < 0)[0]
-    del seg
-    if not len(new):
+    s1r, qs, qr = missing_pairs(split, cand, "ps")
+    if not len(s1r):
         log("pairscore: all pairs cached"); return
-    s1r, qs, qr, keys = s1r[new], qs[new], qr[new], keys[new]
-    del new
+    keys = pair_key(s1r, qs, qr)
     log(f"pairscore: scoring {len(keys)} new pairs")
     cols = [f"ps_{f}" for f in FIELDS]
     d, M = new_segment(split, "ps", len(keys), cols)
@@ -92,7 +85,8 @@ def run(split, cand):
         M[:, j] = res
         log(f"  {f}: done, nan={np.isnan(res).mean():.3f} mean={np.nanmean(res):.3f}")
         del res
-    finish_segment(d, M, keys, cols)
+    M.flush(); del M
+    finish_segment(d, len(keys), keys, cols)
 
 
 if __name__ == "__main__":
