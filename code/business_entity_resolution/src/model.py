@@ -40,9 +40,12 @@ def gt_keys():
     return np.sort(pair_key(g["s1_row"].to_numpy(), g["q_src"].to_numpy(), g["q_row"].to_numpy()))
 
 
-def is_pos(keys, gk):
-    pos = np.searchsorted(gk, keys).clip(0, len(gk) - 1)
-    return gk[pos] == keys
+def is_pos(keys, gk, chunk=4_000_000):
+    out = np.empty(len(keys), bool)
+    for i in range(0, len(keys), chunk):  # chunked: bounded int64 temporaries
+        k = keys[i:i + chunk]
+        out[i:i + chunk] = gk[np.searchsorted(gk, k).clip(0, len(gk) - 1)] == k
+    return out
 
 
 def best_per_query(s1, qsrc, qrow, p):
