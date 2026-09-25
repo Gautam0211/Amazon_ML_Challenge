@@ -65,6 +65,25 @@ class Assembler:
         return X[:, self.keep] if len(self.keep) < X.shape[1] else X
 
 
+class RowSeq(lgb.Sequence):
+    """Streams model rows to LightGBM in batches: the full float matrix never exists in memory.
+    Single-row access (bin sampling, monotonic indices) is served from a cached batch."""
+
+    def __init__(self, asm, idx, batch=500_000):
+        self.asm, self.idx, self.batch_size, self._cache = asm, idx, batch, (-1, None)
+
+    def __len__(self):
+        return len(self.idx)
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return self.asm.rows(self.idx[i])
+        b = i // self.batch_size
+        if self._cache[0] != b:
+            self._cache = (b, self.asm.rows(self.idx[b * self.batch_size:(b + 1) * self.batch_size]))
+        return self._cache[1][i - b * self.batch_size]
+
+
 def train_models(asm, y_all, folds, s1_in, params, rounds, early_stop, neg_keep=1.0, hard_rel=0.6):
     c = asm.c
     f = folds[c["s1_row"]]
@@ -76,12 +95,10 @@ def train_models(asm, y_all, folds, s1_in, params, rounds, early_stop, neg_keep=
         keep = ~easy | (np.random.default_rng(1).random(len(samp)) < neg_keep)
         log(f"hard-negative sampling: rows {len(samp)} -> {keep.sum()} (easy negatives {easy.mean():.3f}, kept at {neg_keep})")
         samp, wt = samp[keep], np.where(easy[keep], 1 / neg_keep, 1.0).astype(np.float32)
-    X = asm.rows(samp)
     y, fs = y_all[samp], f[samp]
     log(f"train sample rows={len(y)} pos_rate={y.mean():.4f} features={len(asm.names)}")
-    # bin once, then per-fold subsets share the binned data (raw float matrix freed right away)
-    full = lgb.Dataset(X, y, weight=wt, feature_name=asm.names, free_raw_data=True, params={"verbose": -1}).construct()
-    del X
+    # streamed binning, then per-fold subsets share the binned data
+    full = lgb.Dataset(RowSeq(asm, samp), y, weight=wt, feature_name=asm.names, free_raw_data=True, params={"verbose": -1}).construct()
     models, iters = [], []
     for k in DEV_FOLDS:
         tr = fs != k
