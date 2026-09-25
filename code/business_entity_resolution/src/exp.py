@@ -47,10 +47,10 @@ def load_gt():
     return {c: g[c].to_numpy() for c in ID_COLS}
 
 
-def dev_eval(s1, qs, qr, p, t, margin, folds, gd, bq=None):
-    """Per-fold metrics on dev folds for scored pairs (s1, qs, qr, p) and a policy (t, margin)."""
+def dev_eval(s1, qs, qr, p, t, margin, folds, gd, bq=None, t3=None):
+    """Per-fold metrics on dev folds for scored pairs (s1, qs, qr, p) and a policy (t, margin, S3 threshold)."""
     bq = best_per_query(s1, qs, qr, p) if bq is None else bq
-    pred = assign(bq, t, margin)
+    pred = assign(bq, t, margin, t3)
     return {k: macro_f05(np.nonzero(folds == k)[0], pred, gd) for k in DEV_FOLDS}
 
 

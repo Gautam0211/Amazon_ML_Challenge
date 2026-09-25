@@ -83,8 +83,10 @@ def tokens(split, src, ret):
     else:
         raise ValueError(ret)
     # de-duplicate tokens within a record, sort by record
-    key = np.unique(np.rec.fromarrays([parent, h], names="p,h"))
-    parent, h = key["p"].astype(np.int64), key["h"].astype(np.int64)
+    o = np.lexsort((h, parent))
+    parent, h = parent[o].astype(np.int64), h[o]
+    d = np.r_[True, (parent[1:] != parent[:-1]) | (h[1:] != h[:-1])]
+    parent, h = parent[d], h[d]
     offs = np.zeros(n + 1, np.int64); np.cumsum(np.bincount(parent, minlength=n), out=offs[1:])
     return t["country"].to_numpy(zero_copy_only=False).astype(str), offs, h
 

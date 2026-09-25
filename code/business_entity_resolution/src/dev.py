@@ -15,6 +15,8 @@ Usage: python src/dev.py --exp E001 --parent E000 --change "..." [--cand cand.pa
 import argparse
 import json
 import os
+import subprocess
+import sys
 import time
 
 import lightgbm as lgb
@@ -25,7 +27,7 @@ import pyarrow.parquet as pq
 from common import guard, log, peak_gb, wpath
 from exp import DEV_FOLDS, append_result, ceiling, config_hash, dev_eval, load_gt, summarize
 from features import Context
-from fstore import STR_COLS, Store, add_missing
+from fstore import Store
 from metric import pair_key
 from model import PARAMS, assign, best_per_query, gt_keys, is_pos
 
@@ -40,19 +42,21 @@ def load_cand(name):
 class Assembler:
     """Builds model rows for index sets of a candidate table: q_src, context, extra cand columns, strings."""
 
-    def __init__(self, cand, drop=()):
+    def __init__(self, cand, drop=(), groups=("str",)):
         self.c = cand
         self.ctx = Context(cand)
         self.extra = [c for c in cand if c not in BASE]
-        self.store = Store("train")
-        names = ["q_src_f"] + [f"ctx_{k}" for k in self.ctx.batch(slice(0, 1))] + [f"cand_{c}" for c in self.extra] + STR_COLS
+        self.stores = [Store("train", g) for g in groups]
+        names = ["q_src_f"] + [f"ctx_{k}" for k in self.ctx.batch(slice(0, 1))] + [f"cand_{c}" for c in self.extra]
+        names += [n for st in self.stores for n in st.cols]
         self.keep = [i for i, n in enumerate(names) if n not in drop]
         self.names = [names[i] for i in self.keep]
 
     def rows(self, idx):
         c = self.c
         cols = [c["q_src"][idx].astype(np.float32)] + list(self.ctx.batch(idx).values()) + [c[e][idx].astype(np.float32) for e in self.extra]
-        X = np.hstack([np.column_stack(cols), self.store.gather(pair_key(c["s1_row"][idx], c["q_src"][idx], c["q_row"][idx]))])
+        keys = pair_key(c["s1_row"][idx], c["q_src"][idx], c["q_row"][idx])
+        X = np.hstack([np.column_stack(cols)] + [st.gather(keys) for st in self.stores])
         return X[:, self.keep] if len(self.keep) < X.shape[1] else X
 
 
@@ -110,6 +114,7 @@ def main():
     ap.add_argument("--early_stop", type=int, default=0)
     ap.add_argument("--sample_frac", type=float, default=0.08)
     ap.add_argument("--drop", default="", help="comma-separated feature names to exclude")
+    ap.add_argument("--groups", default="str", help="feature-store groups: str[,ps]")
     ap.add_argument("--t", type=float, default=0.6)
     ap.add_argument("--margin", type=float, default=0.2)
     ap.add_argument("--t_block_s", type=float, default=0)
@@ -118,20 +123,25 @@ def main():
     t0 = time.time()
     out = wpath("exp", a.exp, "oof.parquet")
     params = {**PARAMS, **json.loads(a.params)}
+    # feature-store top-ups run as child processes: their memory is returned before the model stage
+    tf = time.time()
+    here = os.path.dirname(os.path.abspath(__file__))
+    subprocess.run([sys.executable, os.path.join(here, "fstore.py"), "--cand", a.cand], check=True)
+    if "ps" in a.groups.split(","):
+        subprocess.run([sys.executable, os.path.join(here, "pairscore.py"), "--cand", a.cand], check=True)
+    t_feat = time.time() - tf
     folds = np.load(wpath("train", "folds.npy"))
     gd, gk = load_gt(), gt_keys()
     cand = load_cand(a.cand)
     s1, qs, qr = cand["s1_row"], cand["q_src"], cand["q_row"]
     y = is_pos(pair_key(s1, qs, qr), gk)
     tf = time.time()
-    add_missing("train", cand)
-    t_feat = time.time() - tf
     iters, imp = [a.rounds] * 3, []
     if os.path.exists(out):
         log(f"reusing {out}")
         p = pq.read_table(out, columns=["p"])["p"].to_numpy()
     else:
-        asm = Assembler(cand, drop=set(filter(None, a.drop.split(","))))
+        asm = Assembler(cand, drop=set(filter(None, a.drop.split(","))), groups=a.groups.split(","))
         s1_in = np.random.default_rng(0).random(len(folds)) < a.sample_frac
         mp = [wpath("exp", a.exp, f"model_{k}.txt") for k in DEV_FOLDS]
         if all(map(os.path.exists, mp)):  # resume after an abort in scoring
@@ -146,7 +156,7 @@ def main():
         p = score_all(asm, models, iters)
         del asm
         pq.write_table(pa.table({"s1_row": s1, "q_src": qs, "q_row": qr, "p": p}), out)
-    t_model = time.time() - tf - t_feat
+    t_model = time.time() - tf
     rec, c1, c5 = ceiling(s1, qs, qr, folds, gd, gk)
     bq = best_per_query(s1, qs, qr, p)
     per = dev_eval(None, None, None, None, a.t, a.margin, folds, gd, bq=bq)
@@ -162,7 +172,7 @@ def main():
         append_result({
             "exp_id": a.exp, "parent": a.parent, "change": a.change,
             "config_hash": config_hash({"cand": a.cand, "params": params, "rounds": a.rounds, "es": a.early_stop,
-                                        "frac": a.sample_frac, "drop": a.drop}),
+                                        "frac": a.sample_frac, "drop": a.drop, "groups": a.groups}),
             "seed": params.get("seed", 7), "folds": "0-2", "block_recall": round(rec, 5), "ceiling_f1": round(c1, 5),
             "ceiling_f05": round(c5, 5), "cand_per_s1": round(len(s1) / len(folds), 2), "total_pairs": len(s1), **summ,
             "t_block_s": a.t_block_s, "t_feat_s": round(t_feat), "t_model_s": round(t_model), "peak_mem_gb": round(peak_gb(), 2),

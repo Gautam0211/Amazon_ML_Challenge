@@ -2,7 +2,8 @@
 experiment whose candidate set contains that pair. Only context features (which depend on the
 whole candidate set) are rebuilt per experiment.
 
-Layout work/<split>/fstore/seg_NNN/: keys.npy (sorted pair keys), rows.npy (row of each sorted key
+Groups: "str" (string similarities, features.pair_feats) and "ps" (per-field IDF cosines, pairscore.py).
+Layout work/<split>/fstore/<group>/seg_NNN/: keys.npy (sorted pair keys), rows.npy (row of each sorted key
 in X), X.f32 (float32 memmap, n x len(STR_COLS)). Segment 0 is imported from the v2 feature parts;
 later segments hold only pairs that no earlier segment had.
 
@@ -24,18 +25,19 @@ STR_COLS = ["name_ratio", "name_tset", "name_tsort", "name_partial", "core_ratio
             "num_first_eq", "num_n1", "num_n2", "addr_jacc", "core_jacc", "skel_jacc", "core_len1", "core_len2", "addr_empty2", "nonascii2"]
 
 
-def seg_dirs(split):
+def seg_dirs(split, group="str"):
     from common import wpath
-    return sorted(glob.glob(os.path.join(wpath(split, "fstore", "x")[:-2], "seg_*")))
+    return sorted(glob.glob(os.path.join(wpath(split, "fstore", group, "x")[:-2], "seg_*")))
 
 
 class Store:
-    def __init__(self, split):
-        self.segs = []
-        for d in seg_dirs(split):
-            n = json.load(open(os.path.join(d, "meta.json")))["n"]
+    def __init__(self, split, group="str"):
+        self.segs, self.cols = [], STR_COLS
+        for d in seg_dirs(split, group):
+            meta = json.load(open(os.path.join(d, "meta.json")))
+            n, self.cols = meta["n"], meta["cols"]
             self.segs.append((np.load(os.path.join(d, "keys.npy")), np.load(os.path.join(d, "rows.npy")),
-                              (os.path.join(d, "X.f32"), (n, len(STR_COLS)))))
+                              (os.path.join(d, "X.f32"), (n, len(self.cols)))))
 
     def locate(self, keys, chunk=4_000_000):
         """(segment id, row) per key; segment -1 = not stored. Chunked: bounded temporaries."""
@@ -53,7 +55,7 @@ class Store:
     def gather(self, keys):
         seg, row = self.locate(keys)
         assert (seg >= 0).all(), f"{(seg < 0).sum()} pairs missing from feature store"
-        X = np.empty((len(keys), len(STR_COLS)), np.float32)
+        X = np.empty((len(keys), len(self.cols)), np.float32)
         for i, (_, _, (path, shape)) in enumerate(self.segs):
             m = np.nonzero(seg == i)[0]
             if not len(m):
@@ -65,21 +67,31 @@ class Store:
         return X
 
 
-def write_segment(split, keys_unsorted, X_parts, n):
+def new_segment(split, group, n, cols):
+    """Create the next segment dir with an (n, cols) float32 memmap to fill; returns (dir, memmap)."""
+    from common import wpath
+    d = wpath(split, "fstore", group, f"seg_{len(seg_dirs(split, group)):03d}", "x")[:-2]
+    return d, np.memmap(os.path.join(d, "X.f32.tmp"), np.float32, "w+", shape=(n, len(cols)))
+
+
+def finish_segment(d, M, keys_unsorted, cols):
+    from common import log
+    M.flush(); n = len(M); del M
+    os.replace(os.path.join(d, "X.f32.tmp"), os.path.join(d, "X.f32"))
+    order = np.argsort(keys_unsorted, kind="stable")
+    np.save(os.path.join(d, "keys.npy"), keys_unsorted[order]); np.save(os.path.join(d, "rows.npy"), order.astype(np.int32))
+    json.dump({"n": n, "cols": list(cols)}, open(os.path.join(d, "meta.json"), "w"))
+    log(f"feature store segment written: {d} pairs={n}")
+
+
+def write_segment(split, keys_unsorted, X_parts, n, group="str", cols=STR_COLS):
     """keys_unsorted aligned with rows of the concatenated X_parts (iterator of float32 blocks)."""
-    from common import log, wpath
-    d = wpath(split, "fstore", f"seg_{len(seg_dirs(split)):03d}", "x")[:-2]
-    M = np.memmap(os.path.join(d, "X.f32.tmp"), np.float32, "w+", shape=(n, len(STR_COLS)))
+    d, M = new_segment(split, group, n, cols)
     i = 0
     for blk in X_parts:
         M[i:i + len(blk)] = blk; i += len(blk)
     assert i == n
-    M.flush(); del M
-    os.replace(os.path.join(d, "X.f32.tmp"), os.path.join(d, "X.f32"))
-    order = np.argsort(keys_unsorted, kind="stable")
-    np.save(os.path.join(d, "keys.npy"), keys_unsorted[order]); np.save(os.path.join(d, "rows.npy"), order.astype(np.int32))
-    json.dump({"n": n, "cols": STR_COLS}, open(os.path.join(d, "meta.json"), "w"))
-    log(f"feature store segment written: {d} pairs={n}")
+    finish_segment(d, M, keys_unsorted, cols)
 
 
 def init_from_parts(split):
