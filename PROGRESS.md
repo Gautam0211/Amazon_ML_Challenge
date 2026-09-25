@@ -1,18 +1,25 @@
 # PROGRESS — Amazon ML Challenge 2026, Business Entity Resolution
 
 <!-- SESSION-STATE:BEGIN (overwritten at each milestone; resume from here) -->
-## Improvement run (improvement_plan.md) — current state (2026-09-25 23:59)
+## Improvement run (improvement_plan.md) — current state (2026-09-26 01:20)
 
-- Goal: improve pipeline per improvement_plan.md; dev = folds 0-2, primary F1-macro, also F0.5; log experiments/results.csv.
-- Branches: exp/p0-baseline (infra, E000/E001) -> exp/p2-adaptive-k (stacked; E002-E005). Tag baseline-E000 = e8eaeee.
-  gh CLI installed but NOT authenticated -> PRs pending (user must run `gh auth login`).
-- `source env.sh` before running. Runner: `python src/dev.py --exp EXXX --parent ... --cand ... [--sample_frac --neg_keep --groups str,ps]`.
-- Results (dev F1 / F0.5): E000 0.94115/0.96019 (cached v2, 4-fold models) | E001 ref 0.93957/0.9587 |
-  E002 adaptive K (cand_adB) 0.94217/0.96036 KEEP | E003 retriever unions: rejected (cost) | E004 sample 20% 0.94394/0.96197 KEEP.
-- Running: E005 = 40% S1 + hard negatives (easy neg 30%, weighted).
-- Queue: E006 pairscore features (--groups str,ps); P3 full-cosine rerank screen (block.py --rerank_full on qfrac 0.05);
-  Optuna (P6); policy.py (P9); LTR (P10). Final: holdout folds 3-4 once, test inference, validator.
-- Memory: peak commit ~5.4 GB at 20% sample (limit!). Blocking train adaptive = 61 min.
+- COURSE CORRECTION (user, 09-26): PRIMARY METRIC = macro F0.5 (keep/reject, Optuna, policy). Report F1 too.
+  Skip: more retrievers, native-script, cluster consistency, LTR. Never use E000 cached preds (trained on folds 3-4).
+  Every status: precision, recall, F0.5, peak memory.
+- Order: a) E006 DONE keep | b) fallback DONE | c) rerank screen on 5% sample (RUNNING) |
+  d) optional E007 70-100% S1, easy neg 10-15% | e) Optuna F0.5 2-3h, trial0 = current params | f) policy.py F0.5 |
+  g) freeze, holdout folds 3-4 once, final submission + validator; tags best-dev, final.
+- gh: export PATH="$PATH:/c/Program Files/GitHub CLI" (authed). No Claude attribution in commits/PRs.
+  PRs #1,#2,#3 merged (p0, p2 adaptive-K/sampling, p8 features). Branch now: exp/p9-fallback.
+- Run: `source env.sh`; dev: `python src/dev.py --exp EXXX --parent ... --cand cand_adB.parquet --sample_frac 0.4 --neg_keep 0.3 --groups str,ps`
+  final: `python src/final.py --tag E006 --policy_exp E006 ...same flags` (log work/logs/final_E006.out; writes work/models/<tag>/run.json).
+- Dev results (F0.5 / F1 / P / R / peak): E001 0.9587/0.93957 | E002 0.96036/0.94217 | E004 0.96197/0.94394 |
+  E005 0.96291/0.94495/0.98779/0.92567/6.17G | E006 0.96410/0.94622/0.98875/0.92664/7.05G (KEEP).
+- Policy E006 (F0.5): coarse t=0.62 m=0.2 -> 0.96411 (flat vs 0.6/0.2). work/exp/E006/policy.json.
+- Fallback (E006, final.py): total 5946s (train 591, test block 3262, feat 1247, score 724); peak commit 7.7G, max RSS 4.47G.
+  93.05M test cand pairs, 5.72M matched, 94.0% S1 matched. Copy: submissions/E006_fallback/.
+  Official validator OOMs on 93M cand IDs (set of str) -> src/validate_lean.py (official funcs, chunked): PASS w/ --check-ids (v2 parity PASS).
+- Memory: dev peak commit 7.05G (3 fold subsets) — over target; final trains 1 model.
 <!-- SESSION-STATE:END -->
 
 
