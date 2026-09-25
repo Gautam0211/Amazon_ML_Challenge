@@ -1,0 +1,43 @@
+# --- Data: dataset, archives, organiser zip leftovers ---
+student_resource/dataset/
+*.zip
+__MACOSX/
+
+# --- Pipeline work dir and heavy intermediates ---
+work/
+*.parquet
+*.npy
+*.npz
+*.pkl
+*.joblib
+*.txt.gz
+
+# --- Outputs and submission TSVs (regenerable; ~hundreds of MB) ---
+output/
+*.tsv
+TEAM_NAME_submission/
+
+# --- Python / env ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# --- Logs ---
+*.log
+*.out
+
+# --- Tooling ---
+.claude/
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/
+
+# --- OS / IDE ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
