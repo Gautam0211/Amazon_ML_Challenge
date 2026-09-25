@@ -80,12 +80,13 @@ def topk_rows(C, k, rel=0.25, ad=None, amb0=None, very0=None):
     return rows[m], cols[m], vals[m], rank[m]
 
 
-def capped_slots(M, capmask, m=4):
-    """Per CSR row: up to m (column, weight) entries whose column is a capped token; column -1 = empty slot."""
+def capped_slots(M, capid, m=4):
+    """Per CSR row: up to m (capped-token index, weight) entries; capid maps vocab -> 0..ncap-1 or -1; -1 = empty slot."""
     n = M.shape[0]
     rows = np.repeat(np.arange(n), np.diff(M.indptr))
-    sel = capmask[M.indices]
-    r, c, v = rows[sel], M.indices[sel], M.data[sel]
+    cid = capid[M.indices]
+    sel = cid >= 0
+    r, c, v = rows[sel], cid[sel], M.data[sel]
     j = np.arange(len(r)) - (np.cumsum(np.bincount(r, minlength=n)) - np.bincount(r, minlength=n))[r]
     k = j < m
     T = np.full((n, m), -1, np.int32); W = np.zeros((n, m), np.float32)
@@ -93,17 +94,24 @@ def capped_slots(M, capmask, m=4):
     return T, W
 
 
-def add_capped(C, QT, QW, ST, SW, sub=4_000_000):
+def add_capped(C, QT, QW, ST, SW, ncap, sub=4_000_000):
     """Phase 3 full-cosine rerank: add the capped tokens' share of the dot product to every generated pair.
-    Capped (very common) tokens cannot create pairs, but once a pair exists they count in its score."""
+    Capped (very common) tokens cannot create pairs, but once a pair exists they count in its score.
+    Per sub-batch: dense query x capped-token weight table, then one gather per non-empty S1 slot."""
     rows = np.repeat(np.arange(C.shape[0], dtype=np.int32), np.diff(C.indptr))
     for i in range(0, C.nnz, sub):
         r, c = rows[i:i + sub], C.indices[i:i + sub]
-        qt, qw, st, sw = QT[r], QW[r], ST[c], SW[c]
-        add = np.zeros(len(r), np.float32)
+        r0, nr = r[0], r[-1] - r[0] + 1
+        Qd = np.zeros((nr, ncap), np.float32)
+        qt, qw = QT[r0:r0 + nr], QW[r0:r0 + nr]
         for a in range(QT.shape[1]):
-            for b in range(ST.shape[1]):
-                add += ((qt[:, a] == st[:, b]) & (qt[:, a] >= 0)) * qw[:, a] * sw[:, b]
+            q = np.nonzero(qt[:, a] >= 0)[0]
+            Qd[q, qt[q, a]] = qw[q, a]
+        st, sw = ST[c], SW[c]
+        add = np.zeros(len(r), np.float32)
+        for b in range(ST.shape[1]):
+            e = np.nonzero(st[:, b] >= 0)[0]
+            add[e] += Qd[r[e] - r0, st[e, b]] * sw[e, b]
         C.data[i:i + sub] += add
     return C
 
@@ -121,8 +129,9 @@ def block_country(ctry, s1, qs, k, cap, budget, writer, rel=0.25, qfrac=1.0, ad=
     AT = (sp.diags(1 / anorm) @ A @ sp.diags(keep)).T.tocsr()  # vocab x S1, cosine-ready
     idf_miss = np.float32(np.log(len(r1) + 1))
     capmask = df > cap
+    capid = np.where(capmask, np.cumsum(capmask) - 1, -1).astype(np.int32)
     if rerank:
-        ST, SW = capped_slots((sp.diags(1 / anorm) @ A).tocsr(), capmask)
+        ST, SW = capped_slots((sp.diags(1 / anorm) @ A).tocsr(), capid)
     del A
     log(f"  [{ctry}] S1={len(r1)} vocab={len(vocab)} capped_tokens={capmask.sum()}")
     total, hit_rows = 0, 0
@@ -150,7 +159,7 @@ def block_country(ctry, s1, qs, k, cap, budget, writer, rel=0.25, qfrac=1.0, ad=
             end = max(start + 1, int(np.searchsorted(cc, base + budget)))
             C = (B[start:end] @ AT).tocsr()
             if rerank:
-                C = add_capped(C, *capped_slots(B[start:end].tocsr(), capmask), ST, SW)
+                C = add_capped(C, *capped_slots(B[start:end].tocsr(), capid), ST, SW, int(capmask.sum()))
             fl = {} if not ad else {"amb0": qflags[src][0][rq[start:end]], "very0": qflags[src][1][rq[start:end]]}
             qr, s1c, val, rk = topk_rows(C, k, rel, ad, **fl)
             writer.write_table(pa.table({

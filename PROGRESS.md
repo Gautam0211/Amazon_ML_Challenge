@@ -19,6 +19,10 @@
 - Fallback (E006, final.py): total 5946s (train 591, test block 3262, feat 1247, score 724); peak commit 7.7G, max RSS 4.47G.
   93.05M test cand pairs, 5.72M matched, 94.0% S1 matched. Copy: submissions/E006_fallback/.
   Official validator OOMs on 93M cand IDs (set of str) -> src/validate_lean.py (official funcs, chunked): PASS w/ --check-ids (v2 parity PASS).
+- Rerank screen (5% queries, dev recall/pairs-q/time): none 0.9674/9.09/193s | exact rerank 0.9751/8.74/790s (after add_capped
+  gather rewrite, identical output; was 997s) | approx top-M pre-select 0.9714-0.9724 (rejected). Full exact ~4.3h train + ~4.2h test.
+  Model-level screen RUNNING: dev.py --qfrac 0.05 (GT restricted to sampled queries), SR0=cand_adB_q05 vs SR1=cand_adB_rr3_q05,
+  sample_frac 1.0 neg_keep 0.3 groups str,ps. Keep rerank only if SR1 F0.5 clearly > SR0.
 - Memory: dev peak commit 7.05G (3 fold subsets) — over target; final trains 1 model.
 <!-- SESSION-STATE:END -->
 
