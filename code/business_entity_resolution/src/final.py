@@ -66,7 +66,6 @@ def main():
     ap.add_argument("--groups", default="str")
     a = ap.parse_args()
     t0, times = time.time(), {}
-    pol = json.load(open(wpath("exp", a.policy_exp, "policy.json")))
     params = {**PARAMS, **json.loads(a.params)}
     mpath = wpath("models", a.tag, "final.txt")
     os.makedirs(os.path.dirname(mpath), exist_ok=True)
@@ -106,6 +105,7 @@ def main():
         pq.write_table(pa.table({"s1_row": s1, "q_src": qs, "q_row": qr, "p": p}), scores)
     times["score_s"] = round(time.time() - t)
 
+    pol = json.load(open(wpath("exp", a.policy_exp, "policy.json")))  # read late: policy.py may run alongside
     m = assign(best_per_query(s1, qs, qr, p), pol["t"], pol["margin"], pol.get("t3"))
     s1_ids = id_strings(1, pq.read_table(wpath("test", "s1.parquet"), columns=["id_num"])["id_num"].to_numpy()).to_pylist()
     qnum = {s: pq.read_table(wpath("test", f"s{s}.parquet"), columns=["id_num"])["id_num"].to_numpy() for s in (2, 3)}
