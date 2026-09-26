@@ -1,16 +1,16 @@
 # PROGRESS — Amazon ML Challenge 2026, Business Entity Resolution
 
 <!-- SESSION-STATE:BEGIN (overwritten at each milestone; resume from here) -->
-## Improvement run — current state (2026-09-26 11:00)
+## Improvement run — DONE (2026-09-26 12:45)
 
-- PRIMARY METRIC macro F0.5 (report F1, P, R, peak mem). SR1/rerank/E007-larger-data SKIPPED per user.
-- e) Optuna T2 DONE (27 trials, best #20 proxy F05 .96197 vs trial0 .96135). Confirm run E007 = KEEP:
-  dev F05 0.96619 F1 0.94869 P 0.99010 R 0.92906 peak 7.34G (E006 0.96410). Params lr .0459 leaves 210
-  min_data_in_leaf 44 ff .4924 bf .959 l2 2.7926, 1500 rounds. Model time 5.7x E006.
-- f) policy E008 (t .61 m .3, F05 .96625) REJECT (+0.00006). FROZEN policy t=0.60 m=0.2 (work/exp/E007/policy.json).
-- g) HOLDOUT folds 3-4 (once, src/holdout.py): F05 0.96618 F1 0.94872 P 0.99001 R 0.92935 (f3 .96622 f4 .96613), peak 5.23G.
-  Final run RUNNING: final.py --tag E007 --policy_exp E007 ... log work/logs/final_E007.out -> output/*.tsv,
-  then validate_lean.py --check-ids, copy to submissions/E007_final. Backup: submissions/E006_fallback (PASS).
+- PRIMARY METRIC macro F0.5. SR1/rerank/larger-data run SKIPPED per user.
+- FINAL = E007: Optuna T2 #20 params (lr .0459, leaves 210, min_data_in_leaf 44, ff .4924, bf .959, l2 2.7926, 1500 rounds),
+  adaptive-K blocking cand_adB, groups str,ps, sample_frac .4 neg_keep .3, policy t=0.60 m=0.2 (retune E008 rejected).
+  Dev folds 0-2: F05 0.96619 F1 0.94869 P 0.99010 R 0.92906 (E006 0.96410). Holdout folds 3-4 (once): F05 0.96618
+  F1 0.94872 P 0.99001 R 0.92935.
+- Final run: 6782s (train 1448, score 5137), peak commit 8.8G. 93.05M cand pairs, 5.73M matched, 94.04% S1 matched.
+  validate_lean.py --check-ids PASS. Files: output/*.tsv = submissions/E007_final/. Backup: submissions/E006_fallback (PASS).
+- Owner actions: rebuild ZIP (python src/package.py --team <name>), upload (needs approval). Not done.
 - gh: export PATH="$PATH:/c/Program Files/GitHub CLI". No Claude attribution. Branch exp/p9-fallback.
 <!-- SESSION-STATE:END -->
 
@@ -21,7 +21,7 @@ Plain-language log. Only measured numbers appear here. "Pending" means not done 
 
 | Item | Value |
 | --- | --- |
-| Best measured macro-F0.5 (holdout) | **0.9602** (v2, folds 3-4; v1 was 0.9147) |
+| Best measured macro-F0.5 (holdout) | **0.96618** (E007, folds 3-4; v2 0.9602, v1 0.9147) |
 | Blocking candidate recall (train, all folds) | **0.9585** @ k=10 for v2 (ceiling macro-F0.5 0.985); v1 0.869 |
 | Peak RAM (pipeline) | 3.9 GB process RSS (features stage) |
 | Official validator status | **PASS** for v2 (final) and v1, both also with --check-ids |
