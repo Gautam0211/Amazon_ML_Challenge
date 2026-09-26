@@ -52,7 +52,7 @@ def main():
     Xe = asm.rows(ev)
     ye = y[ev].astype(np.float32)
     dtr = lgb.Dataset(asm.rows(samp), y[samp].astype(np.float32), weight=wt, feature_name=asm.names,
-                      free_raw_data=True, params={"verbose": -1, "max_bin": 255}).construct()
+                      free_raw_data=True, params={"verbose": -1, "max_bin": 255, "feature_pre_filter": False}).construct()
     dva = lgb.Dataset(Xe, ye, reference=dtr, free_raw_data=False).construct()
     es1, eqs, eqr = s1[ev], qs[ev], qr[ev]
     del asm, cand, s1, qs, qr, y, samp, wt  # only the binned datasets, Xe and eval ids are needed from here

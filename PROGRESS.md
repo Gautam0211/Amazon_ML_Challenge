@@ -11,7 +11,7 @@
 - Best dev E006: F0.5 0.96410 F1 0.94622 P 0.98875 R 0.92664 peak 7.05G. Policy t=0.62 m=0.2 (coarse).
 - Fallback E006 final: 5946s, peak commit 7.7G / RSS 4.47G, 93.05M test pairs, 5.72M matched. validate_lean PASS --check-ids.
 - Rerank screen: +0.77pp blocking recall but ~4x blocking time; model screen killed (memory) -> skipped.
-- Optuna: src/tune.py, study T2 in work/exp/optuna.db, log work/logs/tune_T2.out, timeout 9000s (ends ~07:53).
+- Optuna T2 DONE 27 trials: best #20 F05 0.96197 P .98895 R .92096 (trial0 E006 0.96135). Confirm = E007 RUNNING (dev_E007.out).
   Proxy: train folds 1-2 S1 frac 0.1 (25% of E006), eval 25% of fold-0 S1; min_data_in_leaf x4 for full data.
   T2 trial0 (E006) F05 0.96135 P 0.98860 R 0.91999 (t=0.70). Steady RSS 1.6G, build peak 6.05G.
   Confirm: python src/dev.py --exp E007 --parent E006 --params '<json>' --rounds <~iters> --cand cand_adB.parquet --sample_frac 0.4 --neg_keep 0.3 --groups str,ps
