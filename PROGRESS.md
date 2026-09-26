@@ -1,18 +1,17 @@
 # PROGRESS — Amazon ML Challenge 2026, Business Entity Resolution
 
 <!-- SESSION-STATE:BEGIN (overwritten at each milestone; resume from here) -->
-## Improvement run (improvement_plan.md) — current state (2026-09-25 23:59)
+## Improvement run — DONE (2026-09-26 12:45)
 
-- Goal: improve pipeline per improvement_plan.md; dev = folds 0-2, primary F1-macro, also F0.5; log experiments/results.csv.
-- Branches: exp/p0-baseline (infra, E000/E001) -> exp/p2-adaptive-k (stacked; E002-E005). Tag baseline-E000 = e8eaeee.
-  gh CLI installed but NOT authenticated -> PRs pending (user must run `gh auth login`).
-- `source env.sh` before running. Runner: `python src/dev.py --exp EXXX --parent ... --cand ... [--sample_frac --neg_keep --groups str,ps]`.
-- Results (dev F1 / F0.5): E000 0.94115/0.96019 (cached v2, 4-fold models) | E001 ref 0.93957/0.9587 |
-  E002 adaptive K (cand_adB) 0.94217/0.96036 KEEP | E003 retriever unions: rejected (cost) | E004 sample 20% 0.94394/0.96197 KEEP.
-- Running: E005 = 40% S1 + hard negatives (easy neg 30%, weighted).
-- Queue: E006 pairscore features (--groups str,ps); P3 full-cosine rerank screen (block.py --rerank_full on qfrac 0.05);
-  Optuna (P6); policy.py (P9); LTR (P10). Final: holdout folds 3-4 once, test inference, validator.
-- Memory: peak commit ~5.4 GB at 20% sample (limit!). Blocking train adaptive = 61 min.
+- PRIMARY METRIC macro F0.5. SR1/rerank/larger-data run SKIPPED per user.
+- FINAL = E007: Optuna T2 #20 params (lr .0459, leaves 210, min_data_in_leaf 44, ff .4924, bf .959, l2 2.7926, 1500 rounds),
+  adaptive-K blocking cand_adB, groups str,ps, sample_frac .4 neg_keep .3, policy t=0.60 m=0.2 (retune E008 rejected).
+  Dev folds 0-2: F05 0.96619 F1 0.94869 P 0.99010 R 0.92906 (E006 0.96410). Holdout folds 3-4 (once): F05 0.96618
+  F1 0.94872 P 0.99001 R 0.92935.
+- Final run: 6782s (train 1448, score 5137), peak commit 8.8G. 93.05M cand pairs, 5.73M matched, 94.04% S1 matched.
+  validate_lean.py --check-ids PASS. Files: output/*.tsv = submissions/E007_final/. Backup: submissions/E006_fallback (PASS).
+- Owner actions: rebuild ZIP (python src/package.py --team <name>), upload (needs approval). Not done.
+- gh: export PATH="$PATH:/c/Program Files/GitHub CLI". No Claude attribution. Branch exp/p9-fallback.
 <!-- SESSION-STATE:END -->
 
 
@@ -22,7 +21,7 @@ Plain-language log. Only measured numbers appear here. "Pending" means not done 
 
 | Item | Value |
 | --- | --- |
-| Best measured macro-F0.5 (holdout) | **0.9602** (v2, folds 3-4; v1 was 0.9147) |
+| Best measured macro-F0.5 (holdout) | **0.96618** (E007, folds 3-4; v2 0.9602, v1 0.9147) |
 | Blocking candidate recall (train, all folds) | **0.9585** @ k=10 for v2 (ceiling macro-F0.5 0.985); v1 0.869 |
 | Peak RAM (pipeline) | 3.9 GB process RSS (features stage) |
 | Official validator status | **PASS** for v2 (final) and v1, both also with --check-ids |

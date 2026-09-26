@@ -159,6 +159,7 @@ def main():
     ap.add_argument("--margin", type=float, default=0.2)
     ap.add_argument("--t_block_s", type=float, default=0)
     ap.add_argument("--no_log", action="store_true")
+    ap.add_argument("--qfrac", type=float, default=1.0, help="GT restricted to block.py --qfrac query sample")
     a = ap.parse_args()
     t0 = time.time()
     out = wpath("exp", a.exp, "oof.parquet")
@@ -172,6 +173,10 @@ def main():
     t_feat = time.time() - tf
     folds = np.load(wpath("train", "folds.npy"))
     gd, gk = load_gt(), gt_keys()
+    if a.qfrac < 1:  # screen on block.py --qfrac output: score only the sampled queries' true pairs
+        m = (gd["q_row"].astype(np.int64) * 2654435761 % 1000) < a.qfrac * 1000
+        gd = {c: v[m] for c, v in gd.items()}
+        gk = np.sort(pair_key(gd["s1_row"], gd["q_src"], gd["q_row"]))
     cand = load_cand(a.cand)
     s1, qs, qr = cand["s1_row"], cand["q_src"], cand["q_row"]
     y = is_pos(pair_key(s1, qs, qr), gk)
