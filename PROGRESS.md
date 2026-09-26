@@ -1,29 +1,20 @@
 # PROGRESS — Amazon ML Challenge 2026, Business Entity Resolution
 
 <!-- SESSION-STATE:BEGIN (overwritten at each milestone; resume from here) -->
-## Improvement run (improvement_plan.md) — current state (2026-09-26 01:20)
+## Improvement run — current state (2026-09-26 05:40)
 
-- COURSE CORRECTION (user, 09-26): PRIMARY METRIC = macro F0.5 (keep/reject, Optuna, policy). Report F1 too.
-  Skip: more retrievers, native-script, cluster consistency, LTR. Never use E000 cached preds (trained on folds 3-4).
-  Every status: precision, recall, F0.5, peak memory.
-- Order: a) E006 DONE keep | b) fallback DONE | c) rerank screen on 5% sample (RUNNING) |
-  d) optional E007 70-100% S1, easy neg 10-15% | e) Optuna F0.5 2-3h, trial0 = current params | f) policy.py F0.5 |
-  g) freeze, holdout folds 3-4 once, final submission + validator; tags best-dev, final.
-- gh: export PATH="$PATH:/c/Program Files/GitHub CLI" (authed). No Claude attribution in commits/PRs.
-  PRs #1,#2,#3 merged (p0, p2 adaptive-K/sampling, p8 features). Branch now: exp/p9-fallback.
-- Run: `source env.sh`; dev: `python src/dev.py --exp EXXX --parent ... --cand cand_adB.parquet --sample_frac 0.4 --neg_keep 0.3 --groups str,ps`
-  final: `python src/final.py --tag E006 --policy_exp E006 ...same flags` (log work/logs/final_E006.out; writes work/models/<tag>/run.json).
-- Dev results (F0.5 / F1 / P / R / peak): E001 0.9587/0.93957 | E002 0.96036/0.94217 | E004 0.96197/0.94394 |
-  E005 0.96291/0.94495/0.98779/0.92567/6.17G | E006 0.96410/0.94622/0.98875/0.92664/7.05G (KEEP).
-- Policy E006 (F0.5): coarse t=0.62 m=0.2 -> 0.96411 (flat vs 0.6/0.2). work/exp/E006/policy.json.
-- Fallback (E006, final.py): total 5946s (train 591, test block 3262, feat 1247, score 724); peak commit 7.7G, max RSS 4.47G.
-  93.05M test cand pairs, 5.72M matched, 94.0% S1 matched. Copy: submissions/E006_fallback/.
-  Official validator OOMs on 93M cand IDs (set of str) -> src/validate_lean.py (official funcs, chunked): PASS w/ --check-ids (v2 parity PASS).
-- Rerank screen (5% queries, dev recall/pairs-q/time): none 0.9674/9.09/193s | exact rerank 0.9751/8.74/790s (after add_capped
-  gather rewrite, identical output; was 997s) | approx top-M pre-select 0.9714-0.9724 (rejected). Full exact ~4.3h train + ~4.2h test.
-  Model-level screen RUNNING: dev.py --qfrac 0.05 (GT restricted to sampled queries), SR0=cand_adB_q05 vs SR1=cand_adB_rr3_q05,
-  sample_frac 1.0 neg_keep 0.3 groups str,ps. Keep rerank only if SR1 F0.5 clearly > SR0.
-- Memory: dev peak commit 7.05G (3 fold subsets) — over target; final trains 1 model.
+- PRIMARY METRIC macro F0.5 (report F1, P, R, peak mem). User 09-26 05:00: SR1 NOT restarted; rerank + E007 SKIPPED.
+  Remaining: e) Optuna F0.5 (RUNNING) -> confirm best on 3 folds full data, keep only if F0.5 > E006 0.96410
+  f) threshold+margin (policy.py) on folds 0-2 | g) freeze, holdout folds 3-4 once, final.py + validate_lean.py.
+  Keep submissions/E006_fallback as backup. If a job is killed: fall back, don't retry the same thing.
+- gh: export PATH="$PATH:/c/Program Files/GitHub CLI". No Claude attribution in commits/PRs. Branch exp/p9-fallback.
+- Best dev E006: F0.5 0.96410 F1 0.94622 P 0.98875 R 0.92664 peak 7.05G. Policy t=0.62 m=0.2 (coarse).
+- Fallback E006 final: 5946s, peak commit 7.7G / RSS 4.47G, 93.05M test pairs, 5.72M matched. validate_lean PASS --check-ids.
+- Rerank screen: +0.77pp blocking recall but ~4x blocking time; model screen killed (memory) -> skipped.
+- Optuna: src/tune.py, study T2 in work/exp/optuna.db, log work/logs/tune_T2.out, timeout 9000s (ends ~07:53).
+  Proxy: train folds 1-2 S1 frac 0.1 (25% of E006), eval 25% of fold-0 S1; min_data_in_leaf x4 for full data.
+  T2 trial0 (E006) F05 0.96135 P 0.98860 R 0.91999 (t=0.70). Steady RSS 1.6G, build peak 6.05G.
+  Confirm: python src/dev.py --exp E007 --parent E006 --params '<json>' --rounds <~iters> --cand cand_adB.parquet --sample_frac 0.4 --neg_keep 0.3 --groups str,ps
 <!-- SESSION-STATE:END -->
 
 
