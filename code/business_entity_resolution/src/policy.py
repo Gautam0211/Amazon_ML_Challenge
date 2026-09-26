@@ -1,7 +1,7 @@
 """Phase 9: tune the decision rule (threshold, margin, per-source thresholds) on dev folds 0-2.
 
-Reads an experiment's cached OOF scores; the model is untouched. Objective: mean macro-F1 over
-folds 0-2 (F0.5 reported alongside).
+Reads an experiment's cached OOF scores; the model is untouched. Objective: mean macro-F0.5 over
+folds 0-2 (F1 reported alongside).
 
 Usage: python src/policy.py --exp E002 [--log EXXX --parent E002]
 """
@@ -34,12 +34,12 @@ def main():
     ev = lambda th, mg, t3=None: dev_eval(None, None, None, None, th, mg, folds, gd, bq=bq, t3=t3)
     res = {}
     for th in np.arange(0.20, 0.81, 0.02):
-        for mg in (0.0, 0.05, 0.1, 0.2):
+        for mg in (0.0, 0.05, 0.1, 0.2, 0.3):
             res[(round(th, 2), mg)] = mean_f05(ev(th, mg))
     (tb, mb), fb = max(res.items(), key=lambda kv: kv[1])
     log(f"coarse best t={tb} margin={mb} F05={fb:.5f}")
     for th in np.arange(tb - 0.02, tb + 0.021, 0.005):
-        for mg in sorted({0.0, 0.02, 0.05, 0.08, 0.1, 0.15, mb}):
+        for mg in sorted({0.0, 0.02, 0.05, 0.08, 0.1, 0.15, mb, max(mb - 0.05, 0), mb + 0.05}):
             res[(round(th, 3), mg)] = mean_f05(ev(th, mg))
     (tb, mb), fb = max(res.items(), key=lambda kv: kv[1])
     # flatness: F0.5 at +-0.05 threshold

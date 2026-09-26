@@ -1,20 +1,17 @@
 # PROGRESS — Amazon ML Challenge 2026, Business Entity Resolution
 
 <!-- SESSION-STATE:BEGIN (overwritten at each milestone; resume from here) -->
-## Improvement run — current state (2026-09-26 05:40)
+## Improvement run — current state (2026-09-26 11:00)
 
-- PRIMARY METRIC macro F0.5 (report F1, P, R, peak mem). User 09-26 05:00: SR1 NOT restarted; rerank + E007 SKIPPED.
-  Remaining: e) Optuna F0.5 (RUNNING) -> confirm best on 3 folds full data, keep only if F0.5 > E006 0.96410
-  f) threshold+margin (policy.py) on folds 0-2 | g) freeze, holdout folds 3-4 once, final.py + validate_lean.py.
-  Keep submissions/E006_fallback as backup. If a job is killed: fall back, don't retry the same thing.
-- gh: export PATH="$PATH:/c/Program Files/GitHub CLI". No Claude attribution in commits/PRs. Branch exp/p9-fallback.
-- Best dev E006: F0.5 0.96410 F1 0.94622 P 0.98875 R 0.92664 peak 7.05G. Policy t=0.62 m=0.2 (coarse).
-- Fallback E006 final: 5946s, peak commit 7.7G / RSS 4.47G, 93.05M test pairs, 5.72M matched. validate_lean PASS --check-ids.
-- Rerank screen: +0.77pp blocking recall but ~4x blocking time; model screen killed (memory) -> skipped.
-- Optuna T2 DONE 27 trials: best #20 F05 0.96197 P .98895 R .92096 (trial0 E006 0.96135). Confirm = E007 RUNNING (dev_E007.out).
-  Proxy: train folds 1-2 S1 frac 0.1 (25% of E006), eval 25% of fold-0 S1; min_data_in_leaf x4 for full data.
-  T2 trial0 (E006) F05 0.96135 P 0.98860 R 0.91999 (t=0.70). Steady RSS 1.6G, build peak 6.05G.
-  Confirm: python src/dev.py --exp E007 --parent E006 --params '<json>' --rounds <~iters> --cand cand_adB.parquet --sample_frac 0.4 --neg_keep 0.3 --groups str,ps
+- PRIMARY METRIC macro F0.5 (report F1, P, R, peak mem). SR1/rerank/E007-larger-data SKIPPED per user.
+- e) Optuna T2 DONE (27 trials, best #20 proxy F05 .96197 vs trial0 .96135). Confirm run E007 = KEEP:
+  dev F05 0.96619 F1 0.94869 P 0.99010 R 0.92906 peak 7.34G (E006 0.96410). Params lr .0459 leaves 210
+  min_data_in_leaf 44 ff .4924 bf .959 l2 2.7926, 1500 rounds. Model time 5.7x E006.
+- f) policy E008 (t .61 m .3, F05 .96625) REJECT (+0.00006). FROZEN policy t=0.60 m=0.2 (work/exp/E007/policy.json).
+- g) HOLDOUT folds 3-4 (once, src/holdout.py): F05 0.96618 F1 0.94872 P 0.99001 R 0.92935 (f3 .96622 f4 .96613), peak 5.23G.
+  Final run RUNNING: final.py --tag E007 --policy_exp E007 ... log work/logs/final_E007.out -> output/*.tsv,
+  then validate_lean.py --check-ids, copy to submissions/E007_final. Backup: submissions/E006_fallback (PASS).
+- gh: export PATH="$PATH:/c/Program Files/GitHub CLI". No Claude attribution. Branch exp/p9-fallback.
 <!-- SESSION-STATE:END -->
 
 
